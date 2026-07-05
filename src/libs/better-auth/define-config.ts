@@ -229,6 +229,30 @@ export function defineConfig(customOptions: CustomBetterAuthOptions) {
           },
         },
       },
+      account: {
+        create: {
+          // Fires when an identity row lands — first Logto sign-in of a fresh
+          // user AND later linking of an existing account both pass through
+          // here (user.create.after misses the linking case). Pre-mint the
+          // user's new-api relay key so the first chat message doesn't pay
+          // the provisioning round-trip; fire-and-forget, the chat path
+          // lazily self-heals if this fails.
+          after: async (createdAccount) => {
+            if (createdAccount.providerId !== 'logto') return;
+            try {
+              const { isNewApiGatewayEnabled, NewApiGatewayService } =
+                await import('@/server/services/newapiGateway');
+              if (!isNewApiGatewayEnabled()) return;
+              void new NewApiGatewayService(serverDB).prefetchOnSignIn(
+                createdAccount.userId,
+                createdAccount.accountId,
+              );
+            } catch (e) {
+              console.warn('[NewApiGateway] failed to schedule sign-in prefetch:', e);
+            }
+          },
+        },
+      },
     },
     user: {
       changeEmail: {
