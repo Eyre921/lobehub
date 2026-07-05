@@ -1,0 +1,261 @@
+# =============================================================================
+# hub (LobeHub) · CNB 云原生构建配置（原生矩阵 amd64+arm64 并行）
+# 结构与 vibeapi/new-api 的 .cnb.yml 保持一致：
+#   push(main|master)  → amd64 + arm64 + manifest 三条并行 pipeline
+#   tag_push(v*.*.*)   → 上述三条 + sync（同步 ghcr.io + Docker Hub，imports 密钥仓）
+# 注意：本项目 Dockerfile 为 node:24-slim + corepack/pnpm，构建期
+# NODE_OPTIONS=8GB —— build pipeline 用 16 cpus runner（内存随核数配给）。
+# =============================================================================
+
+.docker-base: &docker-base
+  docker:
+    image: alpine:3.20
+  services:
+    - docker
+  env:
+    IMAGE: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+
+
+.amd64-stages: &amd64-stages
+  - name: ensure buildx
+    script: |
+      if ! docker buildx version >/dev/null 2>&1; then
+        echo 'buildx not found, installing...'
+        docker buildx version >/dev/null 2>&1 || apk add --no-cache docker-cli-buildx
+      fi
+      docker buildx version
+  - name: docker buildx build & push (amd64 native)
+    script: |
+      set -eu
+      SHA="${CNB_COMMIT:0:7}"
+      REF="${CNB_BRANCH}"
+      docker buildx build \
+        --platform linux/amd64 \
+        -t "${IMAGE}:${REF}-amd64" \
+        -t "${IMAGE}:sha-${SHA}-amd64" \
+        --label org.opencontainers.image.source="https://cnb.cool/${CNB_REPO_SLUG}" \
+        --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+        --label org.opencontainers.image.version="${REF}" \
+        --push \
+        .
+  - name: signal amd64 done
+    type: cnb:resolve
+    options:
+      key: arch-amd64-done
+
+
+.arm64-stages: &arm64-stages
+  - name: ensure buildx
+    script: |
+      if ! docker buildx version >/dev/null 2>&1; then
+        echo 'buildx not found, installing...'
+        docker buildx version >/dev/null 2>&1 || apk add --no-cache docker-cli-buildx
+      fi
+      docker buildx version
+  - name: docker buildx build & push (arm64 native)
+    script: |
+      set -eu
+      SHA="${CNB_COMMIT:0:7}"
+      REF="${CNB_BRANCH}"
+      docker buildx build \
+        --platform linux/arm64 \
+        -t "${IMAGE}:${REF}-arm64" \
+        -t "${IMAGE}:sha-${SHA}-arm64" \
+        --label org.opencontainers.image.source="https://cnb.cool/${CNB_REPO_SLUG}" \
+        --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+        --label org.opencontainers.image.version="${REF}" \
+        --push \
+        .
+  - name: signal arm64 done
+    type: cnb:resolve
+    options:
+      key: arch-arm64-done
+
+
+.manifest-pipeline: &manifest-pipeline
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 2
+  docker:
+    image: alpine:3.20
+  services:
+    - docker
+  env:
+    IMAGE: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+  stages:
+    - name: wait amd64 done
+      type: cnb:await
+      options:
+        key: arch-amd64-done
+    - name: wait arm64 done
+      type: cnb:await
+      options:
+        key: arch-arm64-done
+    - name: ensure buildx
+      script: |
+        docker buildx version >/dev/null 2>&1 || apk add --no-cache docker-cli-buildx
+        docker buildx version
+    - name: merge primary + sha manifest lists
+      script: |
+        set -eu
+        SHA="${CNB_COMMIT:0:7}"
+        REF="${CNB_BRANCH}"
+        docker buildx imagetools create \
+          -t "${IMAGE}:${REF}" \
+          "${IMAGE}:${REF}-amd64" "${IMAGE}:${REF}-arm64"
+        docker buildx imagetools create \
+          -t "${IMAGE}:sha-${SHA}" \
+          "${IMAGE}:sha-${SHA}-amd64" "${IMAGE}:sha-${SHA}-arm64"
+    - name: extra release tags (when CNB_BRANCH starts with v)
+      script: |
+        set -eu
+        case "$CNB_BRANCH" in
+          v*)
+            VERSION="${CNB_BRANCH#v}"
+            docker buildx imagetools create \
+              -t "${IMAGE}:${VERSION}" \
+              "${IMAGE}:${CNB_BRANCH}-amd64" "${IMAGE}:${CNB_BRANCH}-arm64"
+            if ! echo "$CNB_BRANCH" | grep -q -- '-'; then
+              MAJOR="${VERSION%%.*}"
+              MINOR_REST="${VERSION#*.}"
+              MINOR="${MINOR_REST%%.*}"
+              for t in "${MAJOR}.${MINOR}" "${MAJOR}" "latest"; do
+                docker buildx imagetools create \
+                  -t "${IMAGE}:${t}" \
+                  "${IMAGE}:${CNB_BRANCH}-amd64" "${IMAGE}:${CNB_BRANCH}-arm64"
+              done
+            fi
+            ;;
+          *)
+            echo "branch-style ref ($CNB_BRANCH), no extra release tags"
+            ;;
+        esac
+    - name: merge :latest (always = latest build, push 和 tag_push 都更新)
+      script: |
+        set -eu
+        REF="${CNB_BRANCH}"
+        docker buildx imagetools create \
+          -t "${IMAGE}:latest" \
+          "${IMAGE}:${REF}-amd64" "${IMAGE}:${REF}-arm64"
+        echo ":latest now points to current build (REF=${REF})"
+    - name: signal manifest merge done
+      type: cnb:resolve
+      options:
+        key: manifest-merge-done
+
+
+# ----- 镜像外部同步：CNB → ghcr.io + Docker Hub（仅 tag_push 触发，imports 密钥仓）-----
+.sync-pipeline: &sync-pipeline
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 2
+  docker:
+    image: alpine:3.20
+  services:
+    - docker
+  env:
+    IMAGE: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+  imports:
+    - https://cnb.cool/eyre/secret/-/blob/main/external-registries.yml
+  stages:
+    - name: wait manifest done
+      type: cnb:await
+      options:
+        key: manifest-merge-done
+    - name: install regctl
+      script: |
+        set -eu
+        apk add --no-cache curl ca-certificates
+        curl -fsSL -o /usr/local/bin/regctl \
+          https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64
+        chmod +x /usr/local/bin/regctl
+        regctl version
+    - name: registry logins
+      script: |
+        set -eu
+        echo "$CNB_TOKEN"        | regctl registry login docker.cnb.cool --user cnb               --pass-stdin
+        echo "$GHCR_TOKEN"       | regctl registry login ghcr.io          --user "$GHCR_USER"       --pass-stdin
+        echo "$DOCKERHUB_TOKEN"  | regctl registry login docker.io        --user "$DOCKERHUB_USER"  --pass-stdin
+    - name: sync manifest lists to ghcr.io + Docker Hub
+      script: |
+        set -eu
+        VERSION="${CNB_BRANCH#v}"
+        REPO_NAME="${CNB_REPO_SLUG_LOWERCASE##*/}"
+        # OCI 规范：registry 镜像引用必须全小写（namespace + repo）
+        GHCR_USER_LC=$(echo "$GHCR_USER" | tr '[:upper:]' '[:lower:]')
+        DOCKERHUB_USER_LC=$(echo "$DOCKERHUB_USER" | tr '[:upper:]' '[:lower:]')
+        GHCR_IMAGE="ghcr.io/${GHCR_USER_LC}/${REPO_NAME}"
+        DOCKERHUB_IMAGE="docker.io/${DOCKERHUB_USER_LC}/${REPO_NAME}"
+
+        copy_all() {
+          local tag="$1"
+          echo ">>> copy ${IMAGE}:${tag} → ${GHCR_IMAGE}:${tag}"
+          regctl image copy "${IMAGE}:${tag}" "${GHCR_IMAGE}:${tag}"
+          echo ">>> copy ${IMAGE}:${tag} → ${DOCKERHUB_IMAGE}:${tag}"
+          regctl image copy "${IMAGE}:${tag}" "${DOCKERHUB_IMAGE}:${tag}"
+        }
+
+        # 把当前发布版本（src tag）复制到一个目标 tag（dst），用于 src≠dst 的滚动标签。
+        copy_release_to() {
+          local src="$1" dst="$2"
+          echo ">>> copy ${IMAGE}:${src} → ${GHCR_IMAGE}:${dst}"
+          regctl image copy "${IMAGE}:${src}" "${GHCR_IMAGE}:${dst}"
+          echo ">>> copy ${IMAGE}:${src} → ${DOCKERHUB_IMAGE}:${dst}"
+          regctl image copy "${IMAGE}:${src}" "${DOCKERHUB_IMAGE}:${dst}"
+        }
+
+        copy_all "${CNB_BRANCH}"
+        copy_all "${VERSION}"
+
+        # :latest 始终指向最新发布——与 CNB 端 manifest pipeline 的「merge :latest always」保持一致。
+        # 本仓库发布线与 new-api 相同采用 -vb.N（含 '-'），不能用「含 - 即跳过」判断 latest。
+        copy_release_to "${CNB_BRANCH}" "latest"
+
+        # 滚动的 :major 与 :major.minor 仅对不含 '-' 的正式语义化版本创建。
+        if ! echo "$CNB_BRANCH" | grep -q -- '-'; then
+          MAJOR="${VERSION%%.*}"
+          MR="${VERSION#*.}"
+          MINOR="${MR%%.*}"
+          for t in "${MAJOR}.${MINOR}" "${MAJOR}"; do
+            copy_all "$t"
+          done
+        fi
+
+        echo "External sync complete:"
+        echo "  ghcr.io     → ${GHCR_IMAGE}"
+        echo "  docker hub  → ${DOCKERHUB_IMAGE}"
+
+
+"(main|master)":
+  push:
+    amd64:
+      <<: *docker-base
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 16
+      stages: *amd64-stages
+    arm64:
+      <<: *docker-base
+      runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 16
+      stages: *arm64-stages
+    manifest: *manifest-pipeline
+
+
+"v*.*.*":
+  tag_push:
+    amd64:
+      <<: *docker-base
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 16
+      stages: *amd64-stages
+    arm64:
+      <<: *docker-base
+      runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 16
+      stages: *arm64-stages
+    manifest: *manifest-pipeline
+    sync: *sync-pipeline
