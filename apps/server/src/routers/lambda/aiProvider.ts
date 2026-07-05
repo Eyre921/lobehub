@@ -13,6 +13,7 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { getServerGlobalConfig } from '@/server/globalConfig';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { isNewApiGatewayEnabled } from '@/server/services/newapiGateway';
 import { type AiProviderDetailItem, type AiProviderRuntimeState } from '@/types/aiProvider';
 import {
   CreateAiProviderSchema,
@@ -184,6 +185,12 @@ export const aiProviderRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      // newapi managed mode: the server-provisioned relay key must never be
+      // shipped to the browser, so client-side fetch stays force-disabled no
+      // matter what the client sends (hiding the toggle alone is not a guard).
+      if (input.id === 'newapi' && isNewApiGatewayEnabled() && input.value.fetchOnClient) {
+        input.value.fetchOnClient = false;
+      }
       return ctx.aiProviderModel.updateConfig(
         input.id,
         input.value,

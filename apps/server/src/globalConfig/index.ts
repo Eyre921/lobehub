@@ -12,6 +12,7 @@ import { langfuseEnv } from '@/envs/langfuse';
 import { toolsEnv } from '@/envs/tools';
 import { parseSSOProviders } from '@/libs/better-auth/utils/server';
 import { parseSystemAgent } from '@/server/globalConfig/parseSystemAgent';
+import { isNewApiGatewayEnabled } from '@/server/services/newapiGateway';
 import { type GlobalServerConfig } from '@/types/serverConfig';
 import { cleanObject } from '@/utils/object';
 
@@ -94,6 +95,18 @@ export const getServerGlobalConfig = async () => {
         enabled: provider === ModelProvider.LobeHub,
       };
     }
+  }
+
+  // newapi managed mode (must stay AFTER the business override loop): the
+  // billing gateway provisions per-user keys server-side, so the provider is
+  // on by default even without a global NEWAPI_API_KEY, and client-side fetch
+  // stays off so the managed key never reaches the browser.
+  if (isNewApiGatewayEnabled()) {
+    aiProviderSpecificConfig[ModelProvider.NewAPI] = {
+      ...aiProviderSpecificConfig[ModelProvider.NewAPI],
+      enabled: true,
+      fetchOnClient: false,
+    };
   }
 
   const config: GlobalServerConfig = {

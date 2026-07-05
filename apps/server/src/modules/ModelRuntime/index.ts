@@ -1,5 +1,6 @@
 import { type GoogleGenAIOptions } from '@google/genai';
 import {
+  AgentRuntimeErrorType,
   mergeModelRuntimeHooks,
   ModelRuntime,
   type ModelRuntimeHooks,
@@ -23,6 +24,11 @@ import { AiProviderModel } from '@/database/models/aiProvider';
 import { type LobeChatDatabase } from '@/database/type';
 import { getLLMConfig } from '@/envs/llm';
 import { createLLMGenerationTracingHook } from '@/server/services/llmGenerationTracing/hook';
+import {
+  isNewApiGatewayEnabled,
+  NewApiGatewayService,
+  NewApiUnboundError,
+} from '@/server/services/newapiGateway';
 
 import { KeyVaultsGateKeeper } from '../KeyVaultsEncrypt';
 import apiKeyManager from './apiKeyManager';
@@ -434,6 +440,30 @@ export const initModelRuntimeFromDB = async (
   // This ensures provider-specific fields (e.g., cloudflareBaseURLOrAccountID) are included
   const keyVaults = (providerConfig?.keyVaults || {}) as ProviderKeyVaults;
   const payload = buildPayloadFromKeyVaults(keyVaults, runtimeProvider);
+
+  // 3.5 newapi managed mode: when the billing gateway is configured and the
+  // user has no stored key yet (fresh account, linked legacy account, or a
+  // key that was invalidated), provision the per-user relay token now and
+  // continue this very request — the user never sees a key at all.
+  if (provider === ModelProvider.NewAPI && !payload.apiKey && isNewApiGatewayEnabled()) {
+    try {
+      const managed = await new NewApiGatewayService(db).ensureUserApiKey(userId);
+      payload.apiKey = managed.apiKey;
+      if (!payload.baseURL && managed.baseURL) payload.baseURL = managed.baseURL;
+    } catch (e) {
+      if (e instanceof NewApiUnboundError) {
+        throw {
+          error: {
+            message:
+              'Your account is not linked to the model gateway yet. Open Settings → Provider → New API to finish binding, or sign in to the gateway with your original account and link Logto in Profile → Account Bindings.',
+          },
+          errorType: AgentRuntimeErrorType.ProviderBizError,
+          provider,
+        };
+      }
+      throw e;
+    }
+  }
 
   // 4. Get business hooks (billing in cloud, undefined in OSS)
   const businessHooks = getBusinessModelRuntimeHooks(userId, provider, workspaceId);

@@ -226,6 +226,9 @@ export const getLLMConfig = () => {
       ENABLED_NEWAPI: z.boolean(),
       NEWAPI_API_KEY: z.string().optional(),
       NEWAPI_PROXY_URL: z.string().optional(),
+      NEWAPI_PROVISION_KEY: z.string().optional(),
+      NEWAPI_PROVISION_URL: z.string().optional(),
+      NEWAPI_AUTO_PROVISION: z.boolean(),
 
       ENABLED_CEREBRAS: z.boolean(),
       CEREBRAS_API_KEY: z.string().optional(),
@@ -474,9 +477,13 @@ export const getLLMConfig = () => {
       AIHUBMIX_API_KEY: process.env.AIHUBMIX_API_KEY,
       AIHUBMIX_PROXY_URL: process.env.AIHUBMIX_PROXY_URL,
 
-      ENABLED_NEWAPI: !!process.env.NEWAPI_API_KEY,
+      ENABLED_NEWAPI: !!process.env.NEWAPI_API_KEY || !!process.env.NEWAPI_PROVISION_KEY,
       NEWAPI_API_KEY: process.env.NEWAPI_API_KEY,
       NEWAPI_PROXY_URL: process.env.NEWAPI_PROXY_URL,
+      NEWAPI_PROVISION_KEY: process.env.NEWAPI_PROVISION_KEY,
+      NEWAPI_PROVISION_URL: process.env.NEWAPI_PROVISION_URL,
+      NEWAPI_AUTO_PROVISION:
+        process.env.NEWAPI_AUTO_PROVISION === '1' || process.env.NEWAPI_AUTO_PROVISION === 'true',
 
       ENABLED_NEBIUS: !!process.env.NEBIUS_API_KEY,
       NEBIUS_API_KEY: process.env.NEBIUS_API_KEY,
