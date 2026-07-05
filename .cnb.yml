@@ -1,8 +1,8 @@
 # =============================================================================
 # hub (LobeHub) · CNB 云原生构建配置（原生矩阵 amd64+arm64 并行）
 # 结构与 vibeapi/new-api 的 .cnb.yml 保持一致：
-#   push(main|master)  → amd64 + arm64 + manifest 三条并行 pipeline
-#   tag_push(v*.*.*)   → 上述三条 + sync（同步 ghcr.io + Docker Hub，imports 密钥仓）
+#   tag_push(v*.*.*)   → amd64 + arm64 + manifest + sync 四条 pipeline
+#   （分支 push 不构建镜像；发版打 v1.0.0-vb.N tag 即触发全套构建与外部同步）
 # 注意：本项目 Dockerfile 为 node:24-slim + corepack/pnpm，构建期
 # NODE_OPTIONS=8GB —— build pipeline 用 16 cpus runner（内存随核数配给）。
 # =============================================================================
@@ -130,7 +130,7 @@
             echo "branch-style ref ($CNB_BRANCH), no extra release tags"
             ;;
         esac
-    - name: merge :latest (always = latest build, push 和 tag_push 都更新)
+    - name: merge :latest (tag_push 发版时更新，:latest 始终指向最新发布)
       script: |
         set -eu
         REF="${CNB_BRANCH}"
@@ -226,22 +226,8 @@
         echo "  docker hub  → ${DOCKERHUB_IMAGE}"
 
 
-"(main|master)":
-  push:
-    amd64:
-      <<: *docker-base
-      runner:
-        tags: cnb:arch:amd64
-        cpus: 16
-      stages: *amd64-stages
-    arm64:
-      <<: *docker-base
-      runner:
-        tags: cnb:arch:arm64:v8
-        cpus: 16
-      stages: *arm64-stages
-    manifest: *manifest-pipeline
-
+# 分支 push 不触发任何流水线 —— 镜像构建仅在 tag_push（发版）时进行，
+# 避免「推 main 再打 tag」把同一提交构建两遍浪费核时。
 
 "v*.*.*":
   tag_push:
