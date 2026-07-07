@@ -1,3 +1,4 @@
+import { REQUEST_TOPIC_ID_HEADER } from '@lobechat/const';
 import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AGENT_RUNTIME_ERROR_SET, AgentRuntimeErrorType } from '@lobechat/model-runtime';
 import { ChatErrorType } from '@lobechat/types';
@@ -22,8 +23,24 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
   try {
     const workspaceId = await resolveValidWorkspaceIdFromRequest({ req, serverDB, userId });
 
+    // Per-conversation newapi billing group: the topic id travels on every
+    // request (including each step of a frontend-orchestrated tool loop), so we
+    // resolve (and snapshot) the topic's pinned group and pass it down as the
+    // upstream `New-Api-Group` header.
+    let newapiGroup: string | undefined;
+    if (provider === ModelProvider.NewAPI && isNewApiGatewayEnabled()) {
+      const topicId = req.headers.get(REQUEST_TOPIC_ID_HEADER);
+      newapiGroup = await new NewApiGatewayService(serverDB).resolveTopicGroup(
+        userId,
+        topicId,
+        workspaceId,
+      );
+    }
+
     // ============  1. init chat model   ============ //
-    const modelRuntime = await initModelRuntimeFromDB(serverDB, userId, provider, workspaceId);
+    const modelRuntime = await initModelRuntimeFromDB(serverDB, userId, provider, workspaceId, {
+      newapiGroup,
+    });
 
     // ============  2. create chat completion   ============ //
 
@@ -52,7 +69,9 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
         isNewApiGatewayEnabled()
       ) {
         await new NewApiGatewayService(serverDB).refreshUserApiKey(userId);
-        const retryRuntime = await initModelRuntimeFromDB(serverDB, userId, provider, workspaceId);
+        const retryRuntime = await initModelRuntimeFromDB(serverDB, userId, provider, workspaceId, {
+          newapiGroup,
+        });
         return await retryRuntime.chat(data, chatOptions);
       }
       throw chatError;

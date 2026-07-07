@@ -421,6 +421,7 @@ export const initModelRuntimeFromDB = async (
   userId: string,
   provider: string,
   workspaceId?: string,
+  options?: { newapiGroup?: string },
 ): Promise<ModelRuntime> => {
   // 1. Get user's provider configuration from database
   const aiProviderModel = new AiProviderModel(db, userId, workspaceId);
@@ -465,6 +466,17 @@ export const initModelRuntimeFromDB = async (
     }
   }
 
+  // 3.6 newapi managed mode: pin this request to the conversation's billing
+  //     group (resolved & snapshotted per-topic by the caller). It flows as an
+  //     upstream `New-Api-Group` header via defaultHeaders — every request from
+  //     this runtime carries it, covering both the chat route and server-side
+  //     agent loops. No group → no header → new-api bills on the token's own
+  //     (global default) group.
+  const extraParams: Record<string, unknown> = { userId };
+  if (provider === ModelProvider.NewAPI && isNewApiGatewayEnabled() && options?.newapiGroup) {
+    extraParams.defaultHeaders = { 'New-Api-Group': options.newapiGroup };
+  }
+
   // 4. Get business hooks (billing in cloud, undefined in OSS)
   const businessHooks = getBusinessModelRuntimeHooks(userId, provider, workspaceId);
 
@@ -474,5 +486,5 @@ export const initModelRuntimeFromDB = async (
   const hooks = mergeModelRuntimeHooks(businessHooks, tracingHooks);
 
   // 6. Initialize ModelRuntime with the payload and hooks
-  return initModelRuntimeWithUserPayload(provider, payload, { userId }, hooks);
+  return initModelRuntimeWithUserPayload(provider, payload, extraParams, hooks);
 };
