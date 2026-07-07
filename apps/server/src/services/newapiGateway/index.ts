@@ -2,6 +2,7 @@ import { type LobeChatDatabase } from '@lobechat/database';
 import { and, eq } from 'drizzle-orm';
 
 import { AiProviderModel } from '@/database/models/aiProvider';
+import { TopicModel } from '@/database/models/topic';
 import { account, users } from '@/database/schemas';
 import { getLLMConfig } from '@/envs/llm';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
@@ -177,6 +178,42 @@ export class NewApiGatewayService {
     }
     accountCache.delete(sub);
     return (res.body.data as any)?.group ?? group;
+  };
+
+  /**
+   * Resolve the billing group for a conversation (topic), snapshotting it on
+   * first use so the conversation stays pinned to that group even after the
+   * user later changes their global default. Returns the group name to send as
+   * the `New-Api-Group` header, or undefined (→ no header → the token's own
+   * default group) when there's no topic / no gateway binding.
+   *
+   * - Topic already has a group → return it (steady state: one indexed read,
+   *   no gateway round-trip).
+   * - Topic has no group yet (first message) → resolve the user's current
+   *   effective default group from the gateway and freeze it into the topic.
+   */
+  resolveTopicGroup = async (
+    userId: string,
+    topicId?: string | null,
+    workspaceId?: string,
+  ): Promise<string | undefined> => {
+    if (!topicId) return undefined;
+
+    const topicModel = new TopicModel(this.db, userId, workspaceId);
+    const topic = await topicModel.findById(topicId);
+    if (!topic) return undefined;
+    if (topic.metadata?.group) return topic.metadata.group;
+
+    // First message in this topic: snapshot the current default group.
+    const overview = await this.getAccountOverview(userId);
+    if (!overview.bound) return undefined;
+    const defaultGroup = overview.tokenGroup || overview.account.group;
+    if (!defaultGroup) return undefined;
+
+    await topicModel.update(topicId, {
+      metadata: { ...topic.metadata, group: defaultGroup },
+    });
+    return defaultGroup;
   };
 
   /**

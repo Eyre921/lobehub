@@ -152,9 +152,9 @@ export default {
   'menu.sort': 'Custom Sort',
   'newapi.account.autoRatio': 'Auto',
   'newapi.account.billingNote':
-    "Billing follows your gateway account: the selected group's ratio applies to every model call. Top-ups and detailed logs live on the gateway.",
+    'Each conversation is pinned to the group active when it started, so changing this default only affects new conversations — existing ones (including running multi-step tasks) keep their own group. Billing follows the gateway account; top-ups and detailed logs live on the gateway.',
   'newapi.account.followAccountGroup': 'Follow account group ({{group}})',
-  'newapi.account.group': 'Billing group',
+  'newapi.account.group': 'Default group for new conversations',
   'newapi.account.portal': 'Manage / Top up',
   'newapi.account.refresh': 'Refresh',
   'newapi.account.title': 'Account & Billing',

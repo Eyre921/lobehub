@@ -7,12 +7,7 @@ import type { BaseDataModel } from '../meta';
 export type ShareVisibility = 'private' | 'link';
 
 export type TimeGroupId =
-  | 'today'
-  | 'yesterday'
-  | 'week'
-  | 'month'
-  | `${number}-${string}`
-  | `${number}`;
+  'today' | 'yesterday' | 'week' | 'month' | `${number}-${string}` | `${number}`;
 
 export type TopicGroupMode = 'byTime' | 'byProject' | 'flat' | 'byStatus';
 export type TopicSortBy = 'createdAt' | 'updatedAt';
@@ -112,6 +107,15 @@ export interface ChatTopicMetadata {
   bot?: ChatTopicBotContext;
   boundDeviceId?: string;
   cronJobId?: string;
+  /**
+   * new-api billing group pinned to this conversation, snapshotted from the
+   * user's default group when the topic is created. Every relay request for
+   * this topic carries it as the `New-Api-Group` header so the conversation
+   * (including multi-step tool loops) bills/routes on a stable group even if
+   * the user later changes their global default — and switching it here only
+   * affects this conversation.
+   */
+  group?: string;
   /**
    * Scoped pointer to the currently active assistant message for a running
    * heterogeneous agent operation. Includes `operationId` so cold-start

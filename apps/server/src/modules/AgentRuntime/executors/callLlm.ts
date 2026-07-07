@@ -79,6 +79,7 @@ import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { type DeviceAccessReason } from '@/server/services/aiAgent/deviceToolAudit';
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
+import { isNewApiGatewayEnabled, NewApiGatewayService } from '@/server/services/newapiGateway';
 import { OnboardingService } from '@/server/services/onboarding';
 import { toAgentContextDocuments } from '@/utils/agentDocumentContextMapping';
 import { nanoid } from '@/utils/uuid';
@@ -906,12 +907,24 @@ export const callLlm =
         processedMessages = llmPayload.messages;
       }
 
-      // Initialize ModelRuntime (read user's keyVaults from database)
+      // Initialize ModelRuntime (read user's keyVaults from database).
+      // Resolve the conversation's newapi billing group so this server-side
+      // agent step bills on the same group as the rest of the loop (stable
+      // even if the user changes their global default mid-run).
+      let newapiGroup: string | undefined;
+      if (provider === ModelProvider.NewAPI && isNewApiGatewayEnabled()) {
+        newapiGroup = await new NewApiGatewayService(ctx.serverDB).resolveTopicGroup(
+          ctx.userId!,
+          ctx.topicId,
+          ctx.workspaceId,
+        );
+      }
       const modelRuntime = await initModelRuntimeFromDB(
         ctx.serverDB,
         ctx.userId!,
         provider,
         ctx.workspaceId,
+        { newapiGroup },
       );
 
       // Construct ChatStreamPayload

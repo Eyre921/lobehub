@@ -67,6 +67,8 @@ describe('POST handler', () => {
         'test-user-id',
         'test-provider',
         undefined,
+        // non-newapi providers skip group resolution → newapiGroup undefined
+        { newapiGroup: undefined },
       );
     });
 
