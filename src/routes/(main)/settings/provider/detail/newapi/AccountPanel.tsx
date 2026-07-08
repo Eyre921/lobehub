@@ -5,8 +5,9 @@ import { Button, Select } from '@lobehub/ui/base-ui';
 import { ExternalLinkIcon, Loader2Icon, RefreshCwIcon, WalletIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import useSWR from 'swr';
 
+import { buildGroupSelectOptions } from '@/features/NewApiGateway/groupOptions';
+import { useNewapiGatewayAccount } from '@/features/NewApiGateway/useAccount';
 import { lambdaClient } from '@/libs/trpc/client';
 import { useAiInfraStore } from '@/store/aiInfra';
 
@@ -23,11 +24,7 @@ const AccountPanel = memo(() => {
   const [switching, setSwitching] = useState(false);
   const fetchRemoteModelList = useAiInfraStore((s) => s.fetchRemoteModelList);
 
-  const { data, isLoading, mutate } = useSWR(
-    'newapi-gateway-account',
-    () => lambdaClient.newapiGateway.getAccount.query(),
-    { revalidateOnFocus: false },
-  );
+  const { data, isLoading, mutate } = useNewapiGatewayAccount();
 
   if (!data || !data.enabled) return null;
 
@@ -69,20 +66,7 @@ const AccountPanel = memo(() => {
   const balance = (account.quota / account.quotaPerUnit).toFixed(2);
   const used = (account.usedQuota / account.quotaPerUnit).toFixed(2);
 
-  const groupOptions = [
-    {
-      label: t('newapi.account.followAccountGroup', { group: account.group }),
-      value: '',
-    },
-    ...Object.entries(account.usableGroups)
-      .sort(([, a], [, b]) => a.sort - b.sort)
-      .map(([name, info]) => ({
-        label: `${name} · ${
-          info.ratio === 'auto' ? t('newapi.account.autoRatio') : `×${info.ratio}`
-        }${info.desc && info.desc !== name ? ` · ${info.desc}` : ''}`,
-        value: name,
-      })),
-  ];
+  const groupOptions = buildGroupSelectOptions(account.usableGroups, t, { group: account.group });
 
   const handleGroupChange = async (group: string) => {
     setSwitching(true);

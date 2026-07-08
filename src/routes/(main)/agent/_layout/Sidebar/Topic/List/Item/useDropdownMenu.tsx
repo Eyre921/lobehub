@@ -17,6 +17,7 @@ import {
   Share2,
   Star,
   Trash,
+  Wallet,
   Wand2,
 } from 'lucide-react';
 import { useCallback } from 'react';
@@ -26,12 +27,14 @@ import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspa
 import { openRenameModal } from '@/components/RenameModal';
 import { isDesktop } from '@/const/version';
 import { createMoveTopicsModal } from '@/features/AgentTopicManager/MoveTopicsModal';
+import { openTopicGroupModal, useNewapiGatewayAccount } from '@/features/NewApiGateway';
 import { openShareModal } from '@/features/ShareModal';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { buildWorkspaceAwarePath } from '@/features/Workspace/workspaceAwarePath';
 import { useAppOrigin } from '@/hooks/useAppOrigin';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
+import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
 import { useElectronStore } from '@/store/electron';
 import { useGlobalStore } from '@/store/global';
@@ -60,6 +63,17 @@ export const useTopicItemDropdownMenu = ({
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const addTab = useElectronStore((s) => s.addTab);
   const appOrigin = useAppOrigin();
+
+  // Managed new-api gateway: only bound gateway accounts can re-pin a
+  // conversation's billing group, so gate the menu item on that state (one
+  // deduped SWR fetch shared with the settings panel and the error card).
+  // Heterogeneous agents (Claude Code, Codex, …) don't route through the newapi
+  // chat provider, so the pin would be inert for them — hide it there.
+  const { data: gatewayAccount } = useNewapiGatewayAccount();
+  const isHeterogeneousAgent = useAgentStore(agentSelectors.isCurrentAgentHeterogeneous);
+  const canSwitchBillingGroup = Boolean(
+    gatewayAccount?.enabled && gatewayAccount.bound && canEditTopic && !isHeterogeneousAgent,
+  );
 
   const [
     autoRenameTopicTitle,
@@ -143,6 +157,18 @@ export const useTopicItemDropdownMenu = ({
           });
         },
       },
+      ...(canSwitchBillingGroup
+        ? [
+            {
+              icon: <Icon icon={Wallet} />,
+              key: 'billingGroup',
+              label: t('newapi.topicGroup.menu', { ns: 'modelProvider' }),
+              onClick: () => {
+                openTopicGroupModal(id);
+              },
+            },
+          ]
+        : []),
       {
         type: 'divider' as const,
       },
@@ -253,6 +279,7 @@ export const useTopicItemDropdownMenu = ({
     title,
     canCreateTopic,
     canEditTopic,
+    canSwitchBillingGroup,
     activeAgentId,
     activeWorkspaceSlug,
     appOrigin,

@@ -15,6 +15,7 @@ import useRenderBusinessChatErrorMessageExtra from '@/business/client/hooks/useR
 import ErrorContent from '@/features/Conversation/ChatItem/components/ErrorContent';
 import { dataSelectors, useConversationStore } from '@/features/Conversation/store';
 import HeterogeneousAgentStatusGuide from '@/features/Electron/HeterogeneousAgent/StatusGuide';
+import { NewApiNoChannelError } from '@/features/NewApiGateway';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
 import { useProviderName } from '@/hooks/useProviderName';
@@ -380,13 +381,9 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(
       return <ChatInvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
     }
 
-    // Show a report action for unknown or fallback-bucket traceable errors.
-    // Specific known error types keep their dedicated localized message below.
-    if (enableBusinessFeatures && shouldShowTraceIdError(error)) {
-      return <TraceIdError id={data.id} traceId={error.body.traceId} />;
-    }
-
-    return (
+    // Standard error card. Reused verbatim as the fallback when the managed
+    // new-api group switcher below doesn't apply.
+    const defaultContent = (
       <ErrorContent
         id={data.id}
         error={{
@@ -406,6 +403,31 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(
         onRegenerate={canCreate ? onRegenerate : undefined}
       />
     );
+
+    // Managed new-api conversation whose pinned billing group has no channel for
+    // the requested model (e.g. a Claude-only group asked for GPT). Offer to
+    // re-pin this conversation to a group that serves the model and retry.
+    const errorBody = error?.body as { model?: string; provider?: string } | undefined;
+    if (
+      error?.type === AgentRuntimeErrorType.NoAvailableChannel &&
+      errorBody?.provider === 'newapi'
+    ) {
+      return (
+        <NewApiNoChannelError
+          fallback={defaultContent}
+          model={errorBody?.model}
+          onRetry={canCreate ? handleRetryAgentMessage : undefined}
+        />
+      );
+    }
+
+    // Show a report action for unknown or fallback-bucket traceable errors.
+    // Specific known error types keep their dedicated localized message below.
+    if (enableBusinessFeatures && shouldShowTraceIdError(error)) {
+      return <TraceIdError id={data.id} traceId={error.body.traceId} />;
+    }
+
+    return defaultContent;
   },
 );
 
